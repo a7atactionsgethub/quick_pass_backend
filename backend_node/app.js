@@ -15,8 +15,12 @@ app.use(cors()); // This allows all domains, you can restrict to your frontend U
 
 app.use(bodyParser.json());
 app.use('/qrcodes', express.static(path.join(__dirname, 'public/qrcodes')));
+// Add at the top with other route imports
+app.use('/api', require('./routes/authRoutes'));
 
 // Routes
+app.use('/api', require('./routes/authRoutes'));
+
 app.use('/api/student', require('./routes/studentRoutes'));
 app.use('/api/admin', require('./routes/adminRoutes'));
 app.use('/api/security', require('./routes/securityRoutes'));

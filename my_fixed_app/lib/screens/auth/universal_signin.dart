@@ -1,9 +1,9 @@
 // universal_signin.dart
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:http/http.dart' as http;
 
 class UniversalSignIn extends StatefulWidget {
   const UniversalSignIn({super.key});
@@ -16,7 +16,6 @@ class _UniversalSignInState extends State<UniversalSignIn> {
   final _formKey = GlobalKey<FormState>();
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
-  final FirebaseAuth _auth = FirebaseAuth.instance;
 
   String _selectedRole = 'Student';
   String _errorMessage = '';
@@ -34,6 +33,9 @@ class _UniversalSignInState extends State<UniversalSignIn> {
   final Color _darkRed = const Color(0xFF991B1B);
   final Color _glassWhite = Colors.white.withOpacity(0.1);
   final Color _glassBorder = Colors.white.withOpacity(0.2);
+
+  // Backend URL
+  static const String backendUrl = 'http://localhost:5000/api/auth/login';
 
   void _startTimer() {
     _timer?.cancel();
@@ -54,7 +56,7 @@ class _UniversalSignInState extends State<UniversalSignIn> {
   Future<void> _handleLogin(BuildContext context) async {
     if (!_formKey.currentState!.validate()) return;
 
-    String input = _usernameController.text.trim();
+    String identifier = _usernameController.text.trim();
     final password = _passwordController.text;
 
     if (_blockTime != null && DateTime.now().isBefore(_blockTime!)) {
@@ -66,109 +68,42 @@ class _UniversalSignInState extends State<UniversalSignIn> {
     setState(() => _isLoading = true);
 
     try {
-      String authEmailToUse;
-
-      if (_selectedRole.toLowerCase() == 'student') {
-        if (input.isEmpty) {
-          _handleFailure('Enter roll number');
-          return;
-        }
-        authEmailToUse = '${input.toLowerCase()}@$_studentEmailDomain';
-      } else {
-        authEmailToUse = input;
-      }
-
-      final userCredential = await _auth.signInWithEmailAndPassword(
-        email: authEmailToUse,
-        password: password,
+      final response = await http.post(
+        Uri.parse(backendUrl),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'identifier': identifier,
+          'password': password,
+          'role': _selectedRole.toLowerCase(),
+        }),
       );
 
-      final user = userCredential.user;
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
 
-      if (user == null) {
-        _handleFailure('Authentication failed');
-        return;
+        switch (data['role']) {
+          case 'admin':
+            context.go('/admin');
+            break;
+          case 'security':
+            context.go('/qr-scanner');
+            break;
+          case 'student':
+            context.go('/student-home', extra: {
+              'studentName': data['name'],
+              'profileImageUrl': data['profileImageUrl'] ?? '',
+              'studentDocId': data['identifier'], // using identifier from backend
+              'token': data['token'], // optional
+            });
+            break;
+          default:
+            _handleFailure('Unrecognized role from server');
+        }
+      } else if (response.statusCode == 401) {
+        _handleFailure('Invalid credentials');
+      } else {
+        _handleFailure('Server error: ${response.statusCode}');
       }
-
-      final doc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .get();
-
-      if (!doc.exists || !doc.data()!.containsKey('role')) {
-        _handleFailure('User role not found');
-        return;
-      }
-
-      final role = (doc.data()!['role'] ?? '').toString().trim().toLowerCase();
-      final selectedRole = _selectedRole.trim().toLowerCase();
-
-      if (role != selectedRole) {
-        _handleFailure('Incorrect role selected for this account');
-        return;
-      }
-
-      switch (role) {
-        case 'admin':
-          context.go('/admin');
-          break;
-        case 'security':
-          context.go('/qr-scanner');
-          break;
-        case 'student':
-          DocumentSnapshot<Map<String, dynamic>>? studentDoc;
-
-          final studentByUidQuery = await FirebaseFirestore.instance
-              .collection('students')
-              .where('uid', isEqualTo: user.uid)
-              .limit(1)
-              .get();
-
-          if (studentByUidQuery.docs.isNotEmpty) {
-            studentDoc = studentByUidQuery.docs.first;
-          } else {
-            final byUsername = await FirebaseFirestore.instance
-                .collection('students')
-                .where('username', isEqualTo: _usernameController.text.trim())
-                .limit(1)
-                .get();
-
-            if (byUsername.docs.isNotEmpty) {
-              studentDoc = byUsername.docs.first;
-            } else {
-              final authEmail = '${_usernameController.text.trim().toLowerCase()}@$_studentEmailDomain';
-              final byAuthEmail = await FirebaseFirestore.instance
-                  .collection('students')
-                  .where('authEmail', isEqualTo: authEmail)
-                  .limit(1)
-                  .get();
-              if (byAuthEmail.docs.isNotEmpty) {
-                studentDoc = byAuthEmail.docs.first;
-              }
-            }
-          }
-
-          if (studentDoc == null) {
-            _handleFailure('Student record not found. Contact admin.');
-            return;
-          }
-
-          final sdata = studentDoc.data()!;
-          final studentName = (sdata['name'] ?? '').toString();
-          final profileImageUrl = (sdata['profileImageUrl'] ?? '').toString();
-
-          context.go('/student-home', extra: {
-            'studentName': studentName,
-            'profileImageUrl': profileImageUrl,
-            'studentDocId': studentDoc.id,
-            'uid': user.uid,
-          });
-          break;
-        default:
-          _handleFailure('Unrecognized role');
-      }
-    } on FirebaseAuthException catch (e) {
-      _handleFailure(_getErrorMessage(e.code));
     } catch (e) {
       _setError('Unexpected error: $e');
     }
@@ -203,21 +138,6 @@ class _UniversalSignInState extends State<UniversalSignIn> {
         behavior: SnackBarBehavior.floating,
       ),
     );
-  }
-
-  String _getErrorMessage(String code) {
-    switch (code) {
-      case 'invalid-email':
-        return 'Invalid email address';
-      case 'user-disabled':
-        return 'Account disabled';
-      case 'user-not-found':
-        return 'No account found';
-      case 'wrong-password':
-        return 'Wrong password';
-      default:
-        return 'Login failed: $code';
-    }
   }
 
   @override
@@ -274,12 +194,14 @@ class _UniversalSignInState extends State<UniversalSignIn> {
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(16),
-              borderSide: BorderSide(color: _primaryRed.withOpacity(0.8), width: 2),
+              borderSide:
+                  BorderSide(color: _primaryRed.withOpacity(0.8), width: 2),
             ),
             filled: true,
             fillColor: _glassWhite,
             suffixIcon: suffixIcon,
-            contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
           ),
           validator: validator ??
               (value) {
@@ -355,7 +277,7 @@ class _UniversalSignInState extends State<UniversalSignIn> {
                       ),
                       const SizedBox(height: 32),
 
-                      // Role Dropdown (consistent with AddStudentPage)
+                      // Role Dropdown
                       Padding(
                         padding: const EdgeInsets.only(bottom: 16.0),
                         child: Container(
@@ -392,23 +314,29 @@ class _UniversalSignInState extends State<UniversalSignIn> {
                             },
                             decoration: InputDecoration(
                               labelText: 'Select Role',
-                              labelStyle: const TextStyle(color: Colors.white70),
-                              prefixIcon: Icon(Icons.person_outline, color: Colors.white70),
+                              labelStyle:
+                                  const TextStyle(color: Colors.white70),
+                              prefixIcon: Icon(Icons.person_outline,
+                                  color: Colors.white70),
                               border: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(16),
                                 borderSide: BorderSide.none,
                               ),
                               enabledBorder: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(16),
-                                borderSide: BorderSide(color: _glassBorder, width: 1),
+                                borderSide:
+                                    BorderSide(color: _glassBorder, width: 1),
                               ),
                               focusedBorder: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(16),
-                                borderSide: BorderSide(color: _primaryRed.withOpacity(0.8), width: 2),
+                                borderSide: BorderSide(
+                                    color: _primaryRed.withOpacity(0.8),
+                                    width: 2),
                               ),
                               filled: true,
                               fillColor: _glassWhite,
-                              contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                              contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 20, vertical: 16),
                             ),
                             validator: (value) {
                               if (value == null || value.isEmpty) {
@@ -424,14 +352,17 @@ class _UniversalSignInState extends State<UniversalSignIn> {
                       _buildTextField(
                         _usernameController,
                         isStudent ? 'Roll Number' : 'Email',
-                        keyboardType: isStudent ? TextInputType.text : TextInputType.emailAddress,
+                        keyboardType:
+                            isStudent ? TextInputType.text : TextInputType.emailAddress,
                         prefixIcon: Icon(
                           isStudent ? Icons.badge_outlined : Icons.email_outlined,
                           color: Colors.white70,
                         ),
                         validator: (value) {
                           if (value == null || value.isEmpty) {
-                            return isStudent ? 'Roll number is required' : 'Email is required';
+                            return isStudent
+                                ? 'Roll number is required'
+                                : 'Email is required';
                           }
                           if (!isStudent && !value.contains('@')) {
                             return 'Enter a valid email address';
@@ -448,10 +379,13 @@ class _UniversalSignInState extends State<UniversalSignIn> {
                         prefixIcon: Icon(Icons.lock_outline, color: Colors.white70),
                         suffixIcon: IconButton(
                           icon: Icon(
-                            _obscurePassword ? Icons.visibility_outlined : Icons.visibility_off_outlined,
+                            _obscurePassword
+                                ? Icons.visibility_outlined
+                                : Icons.visibility_off_outlined,
                             color: Colors.white70,
                           ),
-                          onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                          onPressed: () =>
+                              setState(() => _obscurePassword = !_obscurePassword),
                         ),
                         validator: (value) {
                           if (value == null || value.isEmpty) {
@@ -486,7 +420,7 @@ class _UniversalSignInState extends State<UniversalSignIn> {
 
                       const SizedBox(height: 8),
 
-                      // Login Button (matching AddStudentPage style)
+                      // Login Button
                       Container(
                         width: double.infinity,
                         height: 56,
