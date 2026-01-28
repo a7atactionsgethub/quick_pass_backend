@@ -1,12 +1,12 @@
+// routes/authRoutes.js
 const express = require('express');
 const router = express.Router();
 const mysql = require('mysql2/promise');
-const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-
+const jwt = require('jsonwebtoken');
 require('dotenv').config();
 
-// MySQL connection pool
+// Create MySQL connection pool
 const pool = mysql.createPool({
   host: process.env.DB_HOST,
   user: process.env.DB_USER,
@@ -16,18 +16,21 @@ const pool = mysql.createPool({
 });
 
 // POST /api/auth/login
-router.post('/auth/login', async (req, res) => {
+router.post('/login', async (req, res) => {
   const { identifier, password, role } = req.body;
 
   if (!identifier || !password || !role) {
-    return res.status(400).json({ message: 'All fields are required' });
+    return res.status(400).json({ message: 'All fields required' });
   }
 
   try {
-    // Table structure assumption: users (id, name, email, roll_number, password, role, profileImageUrl)
+    // Use LOWER() to make role case-insensitive
     const [rows] = await pool.query(
-      'SELECT * FROM users WHERE (email = ? OR roll_number = ?) AND role = ? LIMIT 1',
-      [identifier, identifier, role]
+      `SELECT * FROM users
+       WHERE LOWER(role) = LOWER(?)
+       AND (email = ? OR roll_number = ?)
+       LIMIT 1`,
+      [role, identifier, identifier]
     );
 
     if (rows.length === 0) {
@@ -36,7 +39,7 @@ router.post('/auth/login', async (req, res) => {
 
     const user = rows[0];
 
-    // Check hashed password using bcrypt
+    // Compare password
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
       return res.status(401).json({ message: 'Invalid credentials' });
@@ -49,17 +52,20 @@ router.post('/auth/login', async (req, res) => {
       { expiresIn: '8h' }
     );
 
-    return res.json({
+    // Send back all necessary info
+    res.json({
       token,
-      role: user.role,
+      role: user.role.toLowerCase(), // always lowercase for Flutter switch
       name: user.name,
+      email: user.email,
+      roll_number: user.roll_number,
       profileImageUrl: user.profileImageUrl || '',
-      identifier: user.roll_number || user.email
+      identifier: user.roll_number || user.email // for Flutter extra
     });
 
   } catch (err) {
-    console.error('Login error:', err);
-    return res.status(500).json({ message: 'Server error' });
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 

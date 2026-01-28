@@ -35,7 +35,10 @@ class _UniversalSignInState extends State<UniversalSignIn> {
   final Color _glassBorder = Colors.white.withOpacity(0.2);
 
   // Backend URL
-  static const String backendUrl = 'http://localhost:5000/api/auth/login';
+static const String backendUrl =
+  'http://127.0.0.1:5000/api/auth/login';
+
+
 
   void _startTimer() {
     _timer?.cancel();
@@ -80,25 +83,29 @@ class _UniversalSignInState extends State<UniversalSignIn> {
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
+final role = (data['role'] ?? '').toString().toLowerCase();
 
-        switch (data['role']) {
-          case 'admin':
-            context.go('/admin');
-            break;
-          case 'security':
-            context.go('/qr-scanner');
-            break;
-          case 'student':
-            context.go('/student-home', extra: {
-              'studentName': data['name'],
-              'profileImageUrl': data['profileImageUrl'] ?? '',
-              'studentDocId': data['identifier'], // using identifier from backend
-              'token': data['token'], // optional
-            });
-            break;
-          default:
-            _handleFailure('Unrecognized role from server');
-        }
+switch (role) {
+  case 'admin':
+    context.go('/admin');
+    print('Server response: ${data}');
+
+    break;
+  case 'security':
+    context.go('/qr-scanner');
+    break;
+  case 'student':
+    context.go('/student-home', extra: {
+      'studentName': data['name'],
+      'profileImageUrl': data['profileImageUrl'] ?? '',
+      'studentDocId': data['identifier'], // using identifier from backend
+      'token': data['token'], // optional
+    });
+    break;
+  default:
+    _handleFailure('Unrecognized role from server: $role');
+}
+
       } else if (response.statusCode == 401) {
         _handleFailure('Invalid credentials');
       } else {
