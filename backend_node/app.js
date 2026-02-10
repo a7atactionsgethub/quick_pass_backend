@@ -1,6 +1,5 @@
 const express = require('express');
 const dotenv = require('dotenv');
-const bodyParser = require('body-parser');
 const path = require('path');
 const cors = require('cors');
 
@@ -9,21 +8,13 @@ dotenv.config();
 const app = express();
 
 /* ================================
-   CORS CONFIG (EXPRESS v5 SAFE)
+   CORS
 ================================ */
 app.use(cors({
   origin: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
-
-// Handle OPTIONS safely (NO path-to-regexp crash)
-app.use((req, res, next) => {
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
-  }
-  next();
-});
 
 /* ================================
    REQUEST LOGGER
@@ -34,15 +25,16 @@ app.use((req, res, next) => {
 });
 
 /* ================================
-   BODY PARSER
+   BODY PARSER (BUILT-IN)
 ================================ */
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 /* ================================
    STATIC FILES
 ================================ */
 app.use('/qrcodes', express.static(path.join(__dirname, 'public/qrcodes')));
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 /* ================================
    TEST ROUTE
@@ -50,7 +42,7 @@ app.use('/qrcodes', express.static(path.join(__dirname, 'public/qrcodes')));
 app.get('/api/test', (req, res) => {
   res.json({
     message: 'API test successful ✅',
-    time: new Date()
+    time: new Date(),
   });
 });
 
@@ -78,5 +70,5 @@ app.use((req, res) => {
 const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`🚀 Server running on http://localhost:${PORT}`);
 });
