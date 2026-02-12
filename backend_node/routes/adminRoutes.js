@@ -1,8 +1,8 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const pool = require('../db');
-const upload = require('../middlewares/upload');
-
+//const pool = require('../db');
+const upload = require('../uploads/upload');
+const db = require('../models/db');
 const router = express.Router();
 
 /**

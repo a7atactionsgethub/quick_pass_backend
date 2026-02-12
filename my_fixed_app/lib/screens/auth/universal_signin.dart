@@ -28,17 +28,14 @@ class _UniversalSignInState extends State<UniversalSignIn> {
 
   static const String _studentEmailDomain = 'students.mygate';
 
-  // Glassmorphism Colors (same as AddStudentPage)
+  // Glassmorphism Colors
   final Color _primaryRed = const Color(0xFFDC2626);
   final Color _darkRed = const Color(0xFF991B1B);
   final Color _glassWhite = Colors.white.withOpacity(0.1);
   final Color _glassBorder = Colors.white.withOpacity(0.2);
 
   // Backend URL
-static const String backendUrl =
-  'http://127.0.0.1:5000/api/auth/login';
-
-
+  static const String backendUrl = 'http://127.0.0.1:5000/api/auth/login';
 
   void _startTimer() {
     _timer?.cancel();
@@ -83,29 +80,27 @@ static const String backendUrl =
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-final role = (data['role'] ?? '').toString().toLowerCase();
+        final role = (data['role'] ?? '').toString().toLowerCase();
 
-switch (role) {
-  case 'admin':
-    context.go('/admin');
-    print('Server response: ${data}');
-
-    break;
-  case 'security':
-    context.go('/qr-scanner');
-    break;
-  case 'student':
-    context.go('/student-home', extra: {
-      'studentName': data['name'],
-      'profileImageUrl': data['profileImageUrl'] ?? '',
-      'studentDocId': data['identifier'], // using identifier from backend
-      'token': data['token'], // optional
-    });
-    break;
-  default:
-    _handleFailure('Unrecognized role from server: $role');
-}
-
+        switch (role) {
+          case 'admin':
+            context.go('/admin');
+            print('Server response: ${data}');
+            break;
+          case 'security':
+            context.go('/qr-scanner');
+            break;
+          case 'student':
+            context.go('/student-home', extra: {
+              'studentName': data['name'],
+              'profileImageUrl': data['profileImageUrl'] ?? '',
+              'studentDocId': data['identifier'],
+              'token': data['token'],
+            });
+            break;
+          default:
+            _handleFailure('Unrecognized role from server: $role');
+        }
       } else if (response.statusCode == 401) {
         _handleFailure('Invalid credentials');
       } else {
@@ -155,7 +150,7 @@ switch (role) {
     super.dispose();
   }
 
-  // Custom text field builder matching AddStudentPage style
+  // Custom text field builder
   Widget _buildTextField(
     TextEditingController controller,
     String label, {
@@ -265,6 +260,8 @@ switch (role) {
                 child: Form(
                   key: _formKey,
                   child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       const Text(
                         'Welcome Back',
@@ -273,6 +270,7 @@ switch (role) {
                           fontSize: 28,
                           fontWeight: FontWeight.bold,
                         ),
+                        textAlign: TextAlign.center,
                       ),
                       const SizedBox(height: 8),
                       Text(
@@ -281,88 +279,26 @@ switch (role) {
                           color: Colors.white70,
                           fontSize: 16,
                         ),
+                        textAlign: TextAlign.center,
                       ),
                       const SizedBox(height: 32),
 
                       // Role Dropdown
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 16.0),
-                        child: Container(
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(16),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.1),
-                                blurRadius: 10,
-                                offset: const Offset(0, 5),
-                              ),
-                            ],
-                          ),
-                          child: DropdownButtonFormField<String>(
-                            value: _selectedRole,
-                            dropdownColor: const Color(0xFF2A1A1A),
-                            style: const TextStyle(color: Colors.white),
-                            items: ['Student', 'Admin', 'Security']
-                                .map<DropdownMenuItem<String>>(
-                                  (String role) => DropdownMenuItem<String>(
-                                    value: role,
-                                    child: Text(
-                                      role,
-                                      style: const TextStyle(color: Colors.white),
-                                    ),
-                                  ),
-                                )
-                                .toList(),
-                            onChanged: (String? newValue) {
-                              setState(() {
-                                _selectedRole = newValue!;
-                                _errorMessage = '';
-                              });
-                            },
-                            decoration: InputDecoration(
-                              labelText: 'Select Role',
-                              labelStyle:
-                                  const TextStyle(color: Colors.white70),
-                              prefixIcon: Icon(Icons.person_outline,
-                                  color: Colors.white70),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(16),
-                                borderSide: BorderSide.none,
-                              ),
-                              enabledBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(16),
-                                borderSide:
-                                    BorderSide(color: _glassBorder, width: 1),
-                              ),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(16),
-                                borderSide: BorderSide(
-                                    color: _primaryRed.withOpacity(0.8),
-                                    width: 2),
-                              ),
-                              filled: true,
-                              fillColor: _glassWhite,
-                              contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 20, vertical: 16),
-                            ),
-                            validator: (value) {
-                              if (value == null || value.isEmpty) {
-                                return "Role is required.";
-                              }
-                              return null;
-                            },
-                          ),
-                        ),
-                      ),
+                      _buildRoleDropdown(),
+                      
+                      const SizedBox(height: 16),
 
                       // Username/Roll Number Field
                       _buildTextField(
                         _usernameController,
                         isStudent ? 'Roll Number' : 'Email',
-                        keyboardType:
-                            isStudent ? TextInputType.text : TextInputType.emailAddress,
+                        keyboardType: isStudent 
+                            ? TextInputType.text 
+                            : TextInputType.emailAddress,
                         prefixIcon: Icon(
-                          isStudent ? Icons.badge_outlined : Icons.email_outlined,
+                          isStudent 
+                              ? Icons.badge_outlined 
+                              : Icons.email_outlined,
                           color: Colors.white70,
                         ),
                         validator: (value) {
@@ -405,114 +341,112 @@ switch (role) {
                         },
                       ),
 
+                      // Blocked Timer Message - FIXED
                       if (_blockTime != null)
                         Padding(
                           padding: const EdgeInsets.only(bottom: 16),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.lock_clock, color: _primaryRed, size: 20),
-                              const SizedBox(width: 8),
-                              Text(
-                                'Blocked for ${remainingTime}s',
-                                style: TextStyle(
-                                  color: _primaryRed,
-                                  fontWeight: FontWeight.w500,
-                                  fontSize: 14,
-                                ),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 8,
+                            ),
+                            decoration: BoxDecoration(
+                              color: _primaryRed.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                color: _primaryRed.withOpacity(0.3),
                               ),
-                            ],
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  Icons.lock_clock, 
+                                  color: _primaryRed, 
+                                  size: 18,
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  'Blocked for ${remainingTime}s',
+                                  style: TextStyle(
+                                    color: _primaryRed,
+                                    fontWeight: FontWeight.w500,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
 
                       const SizedBox(height: 8),
 
                       // Login Button
-                      Container(
-                        width: double.infinity,
-                        height: 56,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(16),
-                          gradient: LinearGradient(
-                            colors: [_primaryRed, _darkRed],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
-                          boxShadow: [
-                            BoxShadow(
-                              color: _primaryRed.withOpacity(0.3),
-                              blurRadius: 15,
-                              offset: const Offset(0, 5),
-                            ),
-                          ],
-                        ),
-                        child: ElevatedButton(
-                          onPressed: _isLoading ? null : () => _handleLogin(context),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.transparent,
-                            shadowColor: Colors.transparent,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                          ),
-                          child: _isLoading
-                              ? const SizedBox(
-                                  height: 20,
-                                  width: 20,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: Colors.white,
-                                  ),
-                                )
-                              : const Text(
-                                  'Login',
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                        ),
-                      ),
+                      _buildLoginButton(),
 
-                      // Error Message
+                      // Error Message - FIXED
                       if (_errorMessage.isNotEmpty)
                         Padding(
                           padding: const EdgeInsets.only(top: 16),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.error_outline, color: _primaryRed, size: 16),
-                              const SizedBox(width: 8),
-                              Text(
-                                _errorMessage,
-                                style: TextStyle(
-                                  color: _primaryRed,
-                                  fontSize: 14,
-                                ),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 8,
+                            ),
+                            decoration: BoxDecoration(
+                              color: _primaryRed.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                color: _primaryRed.withOpacity(0.3),
                               ),
-                            ],
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  Icons.error_outline, 
+                                  color: _primaryRed, 
+                                  size: 16,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    _errorMessage,
+                                    style: TextStyle(
+                                      color: _primaryRed,
+                                      fontSize: 14,
+                                    ),
+                                    textAlign: TextAlign.center,
+                                    softWrap: true,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
 
                       // Home Button
                       const SizedBox(height: 24),
-                      Container(
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.3),
-                              blurRadius: 10,
-                              offset: const Offset(0, 5),
-                            ),
-                          ],
-                        ),
-                        child: FloatingActionButton(
-                          onPressed: () => context.go('/'),
-                          backgroundColor: _glassWhite,
-                          foregroundColor: Colors.white,
-                          child: const Icon(Icons.home_outlined),
+                      Center(
+                        child: Container(
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.3),
+                                blurRadius: 10,
+                                offset: const Offset(0, 5),
+                              ),
+                            ],
+                          ),
+                          child: FloatingActionButton(
+                            onPressed: () => context.go('/'),
+                            backgroundColor: _glassWhite,
+                            foregroundColor: Colors.white,
+                            child: const Icon(Icons.home_outlined),
+                          ),
                         ),
                       ),
                     ],
@@ -522,6 +456,126 @@ switch (role) {
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  // Extracted method for Role Dropdown
+  Widget _buildRoleDropdown() {
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 10,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
+      child: DropdownButtonFormField<String>(
+        value: _selectedRole,
+        dropdownColor: const Color(0xFF2A1A1A),
+        style: const TextStyle(color: Colors.white),
+        items: ['Student', 'Admin', 'Security']
+            .map<DropdownMenuItem<String>>(
+              (String role) => DropdownMenuItem<String>(
+                value: role,
+                child: Text(
+                  role,
+                  style: const TextStyle(color: Colors.white),
+                ),
+              ),
+            )
+            .toList(),
+        onChanged: (String? newValue) {
+          setState(() {
+            _selectedRole = newValue!;
+            _errorMessage = '';
+          });
+        },
+        decoration: InputDecoration(
+          labelText: 'Select Role',
+          labelStyle: const TextStyle(color: Colors.white70),
+          prefixIcon: Icon(Icons.person_outline, color: Colors.white70),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16),
+            borderSide: BorderSide.none,
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16),
+            borderSide: BorderSide(color: _glassBorder, width: 1),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16),
+            borderSide: BorderSide(
+              color: _primaryRed.withOpacity(0.8),
+              width: 2,
+            ),
+          ),
+          filled: true,
+          fillColor: _glassWhite,
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 20,
+            vertical: 16,
+          ),
+        ),
+        validator: (value) {
+          if (value == null || value.isEmpty) {
+            return "Role is required.";
+          }
+          return null;
+        },
+      ),
+    );
+  }
+
+  // Extracted method for Login Button
+  Widget _buildLoginButton() {
+    return Container(
+      width: double.infinity,
+      height: 56,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        gradient: LinearGradient(
+          colors: [_primaryRed, _darkRed],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: _primaryRed.withOpacity(0.3),
+            blurRadius: 15,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
+      child: ElevatedButton(
+        onPressed: _isLoading ? null : () => _handleLogin(context),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: Colors.transparent,
+          shadowColor: Colors.transparent,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+        ),
+        child: _isLoading
+            ? const SizedBox(
+                height: 20,
+                width: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
+                ),
+              )
+            : const Text(
+                'Login',
+                style: TextStyle(
+                  fontSize: 16,
+                  color: Colors.white,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
       ),
     );
   }

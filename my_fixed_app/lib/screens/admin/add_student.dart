@@ -2,15 +2,13 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
-
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:intl/intl.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 
 class AddStudentPage extends StatefulWidget {
   const AddStudentPage({super.key});
@@ -41,7 +39,8 @@ class _AddStudentPageState extends State<AddStudentPage> {
   bool _isLoading = false;
   bool _isPasswordVisible = false;
 
-  static const String _studentEmailDomain = 'students.mygate';
+  // API endpoint - update with your server URL
+  final String _apiUrl = 'http://127.0.0.1:5000/api/students/add'; // Change this to your server IP
 
   // Glassmorphism Colors
   final Color _primaryRed = const Color(0xFFDC2626);
@@ -97,45 +96,21 @@ class _AddStudentPageState extends State<AddStudentPage> {
     }
   }
 
-  // Upload Image
-  Future<String?> _uploadImage({File? file, Uint8List? bytes}) async {
-    if (file == null && bytes == null) return null;
-
-    final ref = FirebaseStorage.instance
-        .ref()
-        .child('student_profiles')
-        .child('${DateTime.now().millisecondsSinceEpoch}.jpg');
-
+  // Convert image to base64 for sending to server
+  Future<String?> _imageToBase64() async {
     try {
       if (kIsWeb) {
-        final metadata = SettableMetadata(contentType: 'image/jpeg');
-        final uploadTask = ref.putData(bytes!, metadata);
-        final snapshot = await uploadTask.timeout(
-          const Duration(seconds: 60),
-          onTimeout: () {
-            uploadTask.cancel();
-            throw TimeoutException('Image upload timed out');
-          },
-        );
-        if (snapshot.state == TaskState.success) {
-          return await ref.getDownloadURL();
+        if (_profileImageBytes != null) {
+          return base64Encode(_profileImageBytes!);
         }
       } else {
-        final metadata = SettableMetadata(contentType: 'image/jpeg');
-        final uploadTask = ref.putFile(file!, metadata);
-        final snapshot = await uploadTask.timeout(
-          const Duration(seconds: 60),
-          onTimeout: () {
-            uploadTask.cancel();
-            throw TimeoutException('Image upload timed out');
-          },
-        );
-        if (snapshot.state == TaskState.success) {
-          return await ref.getDownloadURL();
+        if (_profileImageFile != null) {
+          final bytes = await _profileImageFile!.readAsBytes();
+          return base64Encode(bytes);
         }
       }
     } catch (e) {
-      rethrow;
+      debugPrint('Image to base64 error: $e');
     }
     return null;
   }
@@ -313,7 +288,7 @@ class _AddStudentPageState extends State<AddStudentPage> {
     );
   }
 
-  // Submit Form with Date Validation
+  // Submit Form to MySQL via API
   Future<void> _submitForm() async {
     if (!_formKey.currentState!.validate()) return;
 
@@ -329,12 +304,11 @@ class _AddStudentPageState extends State<AddStudentPage> {
 
     // Validate Date of Birth
     final dobText = _dobController.text.trim();
-    DateTime? dobDate;
     String formattedDob = '';
 
     if (dobText.isNotEmpty) {
       try {
-        dobDate = DateTime.parse(dobText);
+        final dobDate = DateTime.parse(dobText);
         formattedDob = DateFormat('yyyy-MM-dd').format(dobDate);
       } catch (e) {
         _showErrorDialog('Invalid Date',
@@ -346,71 +320,52 @@ class _AddStudentPageState extends State<AddStudentPage> {
       return;
     }
 
-    // Email validation
-    final emailRegex =
-        RegExp(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$');
-    final authEmail = '${rollNumber.toLowerCase()}@$_studentEmailDomain';
-
-    if (!emailRegex.hasMatch(authEmail)) {
-      _showErrorDialog(
-          'Invalid Email Format', 'Please check the roll number format.');
-      return;
-    }
-
     setState(() => _isLoading = true);
 
-    UserCredential? createdUserCred;
-    String? imageUrl;
-
     try {
-      createdUserCred = await FirebaseAuth.instance
-          .createUserWithEmailAndPassword(email: authEmail, password: password);
+      // Convert image to base64 if exists
+      String? base64Image = await _imageToBase64();
 
-      final uid = createdUserCred.user?.uid;
-      if (uid == null) throw Exception('Failed to create user');
-
-      imageUrl = await _uploadImage(
-          file: _profileImageFile, bytes: _profileImageBytes);
-
-      final data = {
-        'uid': uid,
+      // Prepare data for API
+      final studentData = {
         'name': name,
-        'dob': formattedDob, // Use validated and formatted date
+        'rollNumber': rollNumber,
+        'dob': formattedDob,
         'department': department,
         'address': address,
         'phone': phone,
         'gender': gender,
-        'guardianName': guardianName,
-        'guardianPhNo': guardianPhone,
-        'username': rollNumber,
-        'authEmail': authEmail,
-        'rollNumber': rollNumber,
-        'profileImageUrl': imageUrl ?? '',
-        'createdAt': FieldValue.serverTimestamp(),
+        'guardian_name': guardianName,
+        'guardian_phone': guardianPhone,
+        'password': password,
+        'profile_image': base64Image, // Optional
       };
 
-      await FirebaseFirestore.instance
-          .collection('students')
-          .doc(uid)
-          .set(data);
+      // Send POST request to backend
+      final response = await http.post(
+        Uri.parse(_apiUrl),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(studentData),
+      ).timeout(
+        const Duration(seconds: 30),
+        onTimeout: () {
+          throw Exception('Connection timeout. Please check your internet connection.');
+        },
+      );
 
-      await FirebaseFirestore.instance.collection('users').doc(uid).set({
-        'role': 'student',
-        'name': name,
-        'rollNumber': rollNumber,
-        'authEmail': authEmail,
-        'createdAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+      final responseData = jsonDecode(response.body);
 
-      if (mounted) {
-        _showSuccessDialog();
+      if (response.statusCode == 200) {
+        if (mounted) {
+          _showSuccessDialog();
+        }
+      } else {
+        throw Exception(responseData['message'] ?? 'Failed to add student');
       }
     } catch (e) {
-      if (createdUserCred != null) {
-        await createdUserCred.user?.delete();
+      if (mounted) {
+        _showErrorDialog('Creation Failed', 'Failed to create student account: $e');
       }
-      _showErrorDialog(
-          'Creation Failed', 'Failed to create student account: $e');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -591,7 +546,7 @@ class _AddStudentPageState extends State<AddStudentPage> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        'Create student account with authentication',
+                        'Create student account',
                         style: TextStyle(
                           color: Colors.white70,
                           fontSize: 16,
@@ -605,7 +560,7 @@ class _AddStudentPageState extends State<AddStudentPage> {
 
                       _buildTextField(_nameController, 'Name'),
 
-                      // DOB Date Picker - FIXED VERSION
+                      // DOB Date Picker
                       _buildTextField(
                         _dobController,
                         'Date of Birth',
@@ -614,7 +569,6 @@ class _AddStudentPageState extends State<AddStudentPage> {
                           if (value == null || value.trim().isEmpty) {
                             return "Date of birth is required.";
                           }
-                          // Additional validation for valid date
                           try {
                             DateTime.parse(value);
                             return null;
@@ -624,8 +578,7 @@ class _AddStudentPageState extends State<AddStudentPage> {
                         },
                         onTap: () async {
                           final DateTime initialDate = DateTime.now().subtract(
-                              const Duration(
-                                  days: 365 * 18)); // 18 years old by default
+                              const Duration(days: 365 * 18));
                           final DateTime? picked = await showDatePicker(
                             context: context,
                             initialDate: initialDate,
@@ -690,7 +643,7 @@ class _AddStudentPageState extends State<AddStudentPage> {
                             ],
                           ),
                           child: DropdownButtonFormField<String>(
-                            initialValue: _departmentController.text.isEmpty
+                            value: _departmentController.text.isEmpty
                                 ? null
                                 : _departmentController.text,
                             dropdownColor: const Color(0xFF2A1A1A),
@@ -754,7 +707,6 @@ class _AddStudentPageState extends State<AddStudentPage> {
 
                       _buildTextField(_addressController, 'Address'),
 
-                      // Phone validation
                       _buildTextField(
                         _phoneController,
                         'Phone Number',
@@ -785,7 +737,7 @@ class _AddStudentPageState extends State<AddStudentPage> {
                             ],
                           ),
                           child: DropdownButtonFormField<String>(
-                            initialValue: _selectedGender,
+                            value: _selectedGender,
                             dropdownColor: const Color(0xFF2A1A1A),
                             style: const TextStyle(color: Colors.white),
                             items: ['Male', 'Female', 'Other']
@@ -843,7 +795,6 @@ class _AddStudentPageState extends State<AddStudentPage> {
                         },
                       ),
 
-                      // Password with Eye Icon
                       _buildTextField(
                         _passwordController,
                         'Password',
@@ -927,5 +878,19 @@ class _AddStudentPageState extends State<AddStudentPage> {
         ),
       ),
     );
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _dobController.dispose();
+    _departmentController.dispose();
+    _addressController.dispose();
+    _phoneController.dispose();
+    _guardianNameController.dispose();
+    _guardianPhoneController.dispose();
+    _passwordController.dispose();
+    _rollNumberController.dispose();
+    super.dispose();
   }
 }
