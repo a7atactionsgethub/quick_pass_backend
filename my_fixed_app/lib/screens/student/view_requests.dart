@@ -1,20 +1,27 @@
-// my_gate_pass.dart
-import 'dart:convert';
+// view_requests.dart
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:qr_flutter/qr_flutter.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart';
 
 class MyGatePass extends StatefulWidget {
-  const MyGatePass({super.key});
+  final String rollNumber;
+
+  const MyGatePass({
+    super.key,
+    required this.rollNumber,
+  });
 
   @override
   State<MyGatePass> createState() => _MyGatePassState();
 }
 
 class _MyGatePassState extends State<MyGatePass> {
-  // Use direct colors instead of AppTheme to avoid errors
+  // Backend URL
+  final String _baseUrl = 'http://127.0.0.1:5000/api';
+  
+  // Use direct colors
   static const Color _primaryColor = Color(0xFFDC2626);
   static const Color _glassColor = Color(0x1AFFFFFF);
   static const Color _glassBorder = Color(0x33FFFFFF);
@@ -27,6 +34,45 @@ class _MyGatePassState extends State<MyGatePass> {
     Color(0xFF2D1B1B),
     Color(0xFF1A1A1A),
   ];
+
+  List<dynamic> _gatePasses = [];
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchGatePasses();
+  }
+
+  Future<void> _fetchGatePasses() async {
+    setState(() => _isLoading = true);
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token') ?? '';
+
+      final response = await http.get(
+        Uri.parse('$_baseUrl/gatepass/student/${widget.rollNumber}'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        setState(() {
+          _gatePasses = data['data'] ?? [];
+          _isLoading = false;
+        });
+      } else {
+        setState(() => _isLoading = false);
+      }
+    } catch (e) {
+      debugPrint('Error fetching gate passes: $e');
+      setState(() => _isLoading = false);
+    }
+  }
 
   Widget _infoRow(String label, String value) {
     return Padding(
@@ -61,55 +107,8 @@ class _MyGatePassState extends State<MyGatePass> {
     );
   }
 
-  Map<String, dynamic> _buildQrPayload(Map<String, dynamic> data, String passId) {
-    final studentName = (data['studentName'] ?? '').toString();
-    final rollNumber = (data['rollNumber'] ?? data['roll'] ?? data['username'] ?? '').toString();
-    final department = (data['department'] ?? data['dept'] ?? '').toString();
-    final departure = (data['departureTime'] ?? '').toString();
-    final ret = (data['returnTime'] ?? '').toString();
-    final studentDocId = (data['studentDocId'] ?? '').toString();
-    final uid = (data['uid'] ?? '').toString();
-    final reason = (data['reason'] ?? '').toString();
-    return {
-      'passId': passId, 
-      'studentName': studentName,
-      'rollNumber': rollNumber,
-      'department': department,
-      'reason': reason,
-      'departureTime': departure,
-      'returnTime': ret,
-      'studentDocId': studentDocId,
-      'uid': uid,
-    };
-  }
-
   @override
   Widget build(BuildContext context) {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
-      return Scaffold(
-        body: Container(
-          width: double.infinity,
-          height: double.infinity,
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: _backgroundGradient,
-            ),
-          ),
-          child: const Center(
-            child: Text(
-              'Not signed in',
-              style: TextStyle(color: Colors.white),
-            ),
-          ),
-        ),
-      );
-    }
-
-    final uid = user.uid;
-
     return Scaffold(
       body: Container(
         width: double.infinity,
@@ -152,7 +151,7 @@ class _MyGatePassState extends State<MyGatePass> {
                     ),
                     const SizedBox(width: 16),
                     const Text(
-                      'My Gate Pass',
+                      'My Gate Passes',
                       style: TextStyle(
                         fontSize: 28,
                         fontWeight: FontWeight.bold,
@@ -164,277 +163,22 @@ class _MyGatePassState extends State<MyGatePass> {
               ),
               
               Expanded(
-                child: StreamBuilder<QuerySnapshot>(
-                  stream: FirebaseFirestore.instance
-                      .collection('gatepass_requests')
-                      .where('uid', isEqualTo: uid)
-                      .orderBy('createdAt', descending: true)
-                      .limit(1)
-                      .snapshots(),
-                  builder: (context, snapshot) {
-                    if (snapshot.connectionState == ConnectionState.waiting) {
-                      return Center(
-                        child: Container(
-                          width: 60,
-                          height: 60,
-                          decoration: BoxDecoration(
-                            color: _glassColor,
-                            borderRadius: BorderRadius.circular(30),
-                            border: Border.all(color: _glassBorder),
-                          ),
-                          child: const CircularProgressIndicator(
-                            valueColor: AlwaysStoppedAnimation<Color>(_primaryColor),
-                            strokeWidth: 3,
-                          ),
+                child: _isLoading
+                    ? const Center(
+                        child: CircularProgressIndicator(
+                          valueColor: AlwaysStoppedAnimation<Color>(_primaryColor),
                         ),
-                      );
-                    }
-
-                    if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                      return Center(
-                        child: Container(
-                          width: MediaQuery.of(context).size.width * 0.8,
-                          padding: const EdgeInsets.all(24),
-                          decoration: BoxDecoration(
-                            color: _glassColor,
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(color: _glassBorder),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.1),
-                                blurRadius: 20,
-                              ),
-                            ],
+                      )
+                    : _gatePasses.isEmpty
+                        ? _buildEmptyState()
+                        : ListView.builder(
+                            padding: const EdgeInsets.symmetric(horizontal: 24),
+                            itemCount: _gatePasses.length,
+                            itemBuilder: (context, index) {
+                              final pass = _gatePasses[index];
+                              return _buildGatePassCard(pass);
+                            },
                           ),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(
-                                Icons.receipt_long_outlined,
-                                size: 64,
-                                color: _textTertiary,
-                              ),
-                              const SizedBox(height: 16),
-                              const Text(
-                                "No Gate Pass Found",
-                                style: TextStyle(
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold,
-                                  color: _textPrimary,
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              const Text(
-                                "You haven't requested any gate pass yet.",
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  color: _textSecondary,
-                                  fontSize: 14,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      );
-                    }
-
-                    final passDoc = snapshot.data!.docs.first;
-                    final data = passDoc.data() as Map<String, dynamic>;
-                    final status = (data['status'] ?? 'Pending').toString();
-                    final statusLower = status.toLowerCase();
-
-                    final returnTimeStr = data['returnTime'] as String? ?? '2000-01-01T00:00:00.000';
-                    final isExpired = DateTime.now().isAfter(DateTime.parse(returnTimeStr));
-                    final isUsed = (statusLower == 'in' || statusLower == 'returned');
-
-                    final studentName = (data['studentName'] ?? '').toString();
-                    final rollNumber = (data['rollNumber'] ?? data['roll'] ?? data['username'] ?? '').toString();
-                    final department = (data['department'] ?? data['dept'] ?? '').toString();
-                    final reason = (data['reason'] ?? '').toString();
-                    final departure = (data['departureTime'] ?? '').toString();
-                    final ret = (data['returnTime'] ?? '').toString();
-                    final createdAt = data['createdAt'];
-
-                    final payloadMap = _buildQrPayload(data, passDoc.id);
-                    final qrData = jsonEncode(payloadMap);
-                    
-                    return SingleChildScrollView(
-                      physics: const BouncingScrollPhysics(),
-                      padding: const EdgeInsets.symmetric(horizontal: 24),
-                      child: Column(
-                        children: [
-                          // Student Info Card
-                          Container(
-                            width: double.infinity,
-                            decoration: BoxDecoration(
-                              color: _glassColor,
-                              borderRadius: BorderRadius.circular(20),
-                              border: Border.all(color: _glassBorder),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.1),
-                                  blurRadius: 20,
-                                ),
-                              ],
-                            ),
-                            child: Padding(
-                              padding: const EdgeInsets.all(20),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Row(
-                                    children: [
-                                      Container(
-                                        padding: const EdgeInsets.all(8),
-                                        decoration: BoxDecoration(
-                                          color: _glassColor,
-                                          borderRadius: BorderRadius.circular(12),
-                                          border: Border.all(color: _glassBorder),
-                                        ),
-                                        child: const Icon(
-                                          Icons.credit_card_outlined,
-                                          color: _textPrimary,
-                                          size: 24,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 12),
-                                      const Text(
-                                        'Student Information',
-                                        style: TextStyle(
-                                          fontSize: 18,
-                                          fontWeight: FontWeight.bold,
-                                          color: _textPrimary,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 16),
-                                  _infoRow('Name', studentName),
-                                  _infoRow('Roll No', rollNumber),
-                                  _infoRow('Department', department),
-                                  if (reason.isNotEmpty) ...[
-                                    const SizedBox(height: 12),
-                                    Container(
-                                      width: double.infinity,
-                                      padding: const EdgeInsets.all(12),
-                                      decoration: BoxDecoration(
-                                        color: _glassColor,
-                                        borderRadius: BorderRadius.circular(12),
-                                        border: Border.all(color: _glassBorder),
-                                      ),
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          const Text(
-                                            'Reason',
-                                            style: TextStyle(
-                                              fontWeight: FontWeight.w600,
-                                              color: _textSecondary,
-                                              fontSize: 14,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 4),
-                                          Text(
-                                            reason,
-                                            style: const TextStyle(
-                                              color: _textPrimary,
-                                              fontSize: 14,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                  if (departure.isNotEmpty || ret.isNotEmpty) ...[
-                                    const SizedBox(height: 12),
-                                    Container(
-                                      width: double.infinity,
-                                      padding: const EdgeInsets.all(12),
-                                      decoration: BoxDecoration(
-                                        color: _glassColor,
-                                        borderRadius: BorderRadius.circular(12),
-                                        border: Border.all(color: _glassBorder),
-                                      ),
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          _infoRow('Departure', departure),
-                                          _infoRow('Return', ret),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                  if (createdAt != null)
-                                    Padding(
-                                      padding: const EdgeInsets.only(top: 12.0),
-                                      child: Text(
-                                        'Requested: ${createdAt is Timestamp ? DateFormat('dd-MM-yyyy hh:mm a').format(createdAt.toDate()) : createdAt.toString()}',
-                                        style: const TextStyle(
-                                          color: _textTertiary, 
-                                          fontSize: 12,
-                                        ),
-                                      ),
-                                    ),
-                                ],
-                              ),
-                            ),
-                          ),
-
-                          const SizedBox(height: 24),
-
-                          // Status Widget
-                          if (statusLower == 'approved' && !isExpired)
-                            _buildStatusWidget(
-                              icon: Icons.verified_outlined,
-                              color: Colors.green,
-                              message: "Gate Pass Approved!",
-                              subMessage: "Valid until ${ret.substring(0, 16).replaceAll('T', ' ')}",
-                              qrData: qrData,
-                              showQr: true,
-                              status: "APPROVED",
-                            )
-                          else if (statusLower == 'out' && !isExpired)
-                            _buildStatusWidget(
-                              icon: Icons.directions_walk_outlined,
-                              color: Colors.orange,
-                              message: "Currently Out of Campus",
-                              subMessage: "Return before ${ret.substring(0, 16).replaceAll('T', ' ')}",
-                              qrData: qrData,
-                              showQr: true,
-                              status: "OUT",
-                            )
-                          else if (isUsed || isExpired)
-                            _buildStatusWidget(
-                              icon: Icons.lock_clock_outlined,
-                              color: Colors.grey,
-                              message: isExpired ? "Gate Pass Expired" : "Gate Pass Used",
-                              subMessage: isUsed ? "Status: $status" : "",
-                              showQr: false,
-                              status: isExpired ? "EXPIRED" : "USED",
-                            )
-                          else if (statusLower == 'rejected')
-                            _buildStatusWidget(
-                              icon: Icons.cancel_outlined,
-                              color: Colors.red,
-                              message: "Gate Pass Rejected",
-                              subMessage: reason.isNotEmpty ? 'Reason: $reason' : '',
-                              showQr: false,
-                              status: "REJECTED",
-                            )
-                          else
-                            _buildStatusWidget(
-                              icon: Icons.pending_actions_outlined,
-                              color: Colors.blue,
-                              message: "Request Pending",
-                              subMessage: "Status: $status",
-                              showQr: false,
-                              status: "PENDING",
-                            ),
-                        ],
-                      ),
-                    );
-                  },
-                ),
               ),
             ],
           ),
@@ -443,140 +187,128 @@ class _MyGatePassState extends State<MyGatePass> {
     );
   }
 
-  Widget _buildStatusWidget({
-    required IconData icon,
-    required Color color,
-    required String message,
-    String subMessage = '',
-    String qrData = '',
-    bool showQr = false,
-    required String status,
-  }) {
-    return Container(
-      width: double.infinity,
-      decoration: BoxDecoration(
-        color: _glassColor,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: _glassBorder),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.1),
-            blurRadius: 20,
-          ),
-        ],
-      ),
-      child: Padding(
+  Widget _buildEmptyState() {
+    return Center(
+      child: Container(
+        width: MediaQuery.of(context).size.width * 0.8,
         padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: _glassColor,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: _glassBorder),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.1),
+              blurRadius: 20,
+            ),
+          ],
+        ),
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            if (showQr) ...[
-              // QR Code at the TOP
-              Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.1),
-                      blurRadius: 15,
-                    ),
-                  ],
-                ),
-                child: QrImageView(
-                  data: qrData,
-                  version: QrVersions.auto,
-                  size: 200.0,
-                  gapless: true,
-                ),
-              ),
-              
-              const SizedBox(height: 16),
-              
-              // QR Instructions
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: _glassColor,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Text(
-                  "Scan this QR at the gate to go out or return",
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: _textSecondary,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-              
-              const SizedBox(height: 24),
-            ],
-            
-            // Status Badge - Smaller text
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              decoration: BoxDecoration(
-                color: color.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: color.withOpacity(0.3)),
-              ),
-              child: Text(
-                status,
-                style: TextStyle(
-                  color: color,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 11,
-                  letterSpacing: 1,
-                ),
-              ),
+            const Icon(
+              Icons.receipt_long_outlined,
+              size: 64,
+              color: _textTertiary,
             ),
-            
-            const SizedBox(height: 20),
-            
-            // Icon
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: color.withOpacity(0.1),
-                shape: BoxShape.circle,
-                border: Border.all(color: color.withOpacity(0.3)),
-              ),
-              child: Icon(icon, color: color, size: 32),
-            ),
-            
             const SizedBox(height: 16),
-            
-            // Message
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
+            const Text(
+              "No Gate Pass Found",
+              style: TextStyle(
                 fontSize: 20,
                 fontWeight: FontWeight.bold,
                 color: _textPrimary,
               ),
             ),
-            
             const SizedBox(height: 8),
-            
-            // Sub Message
-            if (subMessage.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                child: Text(
-                  subMessage,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    color: _textSecondary,
-                    fontSize: 14,
-                  ),
-                ),
+            const Text(
+              "You haven't requested any gate pass yet.",
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: _textSecondary,
+                fontSize: 14,
               ),
+            ),
           ],
         ),
       ),
     );
+  }
+
+  Widget _buildGatePassCard(Map<String, dynamic> pass) {
+    final status = pass['status'] ?? 'Pending';
+    final Color statusColor = status.toLowerCase() == 'approved' 
+        ? Colors.green 
+        : status.toLowerCase() == 'rejected'
+            ? Colors.red
+            : Colors.orange;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: _glassColor,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _glassBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Request #${pass['id']}',
+                style: const TextStyle(
+                  color: _textPrimary,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                decoration: BoxDecoration(
+                  color: statusColor.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: statusColor.withOpacity(0.3)),
+                ),
+                child: Text(
+                  status,
+                  style: TextStyle(
+                    color: statusColor,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'Reason: ${pass['reason'] ?? 'N/A'}',
+            style: const TextStyle(color: _textSecondary),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Departure: ${_formatDate(pass['departureTime'])}',
+            style: const TextStyle(color: _textSecondary, fontSize: 12),
+          ),
+          Text(
+            'Return: ${_formatDate(pass['returnTime'])}',
+            style: const TextStyle(color: _textSecondary, fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatDate(String? dateStr) {
+    if (dateStr == null) return 'N/A';
+    try {
+      final date = DateTime.parse(dateStr);
+      return DateFormat('dd-MM-yyyy hh:mm a').format(date);
+    } catch (e) {
+      return dateStr;
+    }
   }
 }

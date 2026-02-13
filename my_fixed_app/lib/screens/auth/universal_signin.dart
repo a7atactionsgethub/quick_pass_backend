@@ -90,14 +90,16 @@ class _UniversalSignInState extends State<UniversalSignIn> {
           case 'security':
             context.go('/qr-scanner');
             break;
-          case 'student':
-            context.go('/student-home', extra: {
-              'studentName': data['name'],
-              'profileImageUrl': data['profileImageUrl'] ?? '',
-              'studentDocId': data['identifier'],
-              'token': data['token'],
-            });
-            break;
+          // In universal_signin.dart, update the student navigation:
+
+case 'student':
+  context.go('/student-home', extra: {
+    'studentName': data['name'] ?? '',
+    'profileImageUrl': data['profileImageUrl'] ?? '',
+    'rollNumber': data['rollNumber'] ?? identifier, // Pass roll number
+    'token': data['token'] ?? '', // Pass token
+  });
+  break;
           default:
             _handleFailure('Unrecognized role from server: $role');
         }

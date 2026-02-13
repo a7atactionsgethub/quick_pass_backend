@@ -1,21 +1,26 @@
+// student_home_screen.dart
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'gatepass_request.dart';
 import 'view_requests.dart';
 import '../settings/settings_screen.dart';
-
+import 'dart:convert';
 class StudentHomeScreen extends StatefulWidget {
   final String studentName;
   final String profileImageUrl;
+  final String rollNumber;
+  final String token;
 
   const StudentHomeScreen({
     super.key,
     required this.studentName,
     required this.profileImageUrl,
+    required this.rollNumber,
+    required this.token,
   });
 
   @override
@@ -25,7 +30,12 @@ class StudentHomeScreen extends StatefulWidget {
 class _StudentHomeScreenState extends State<StudentHomeScreen> {
   late String _studentName;
   late String _profileImageUrl;
-  bool _loading = true;
+  late String _rollNumber;
+  late String _token;
+  bool _loading = false;
+
+  // Backend URL
+  final String _baseUrl = 'http://127.0.0.1:5000/api';
 
   // Glassmorphism Colors
   final Color _primaryRed = const Color(0xFFDC2626);
@@ -33,89 +43,76 @@ class _StudentHomeScreenState extends State<StudentHomeScreen> {
   final Color _glassWhite = Colors.white.withOpacity(0.1);
   final Color _glassBorder = Colors.white.withOpacity(0.2);
 
+  // Stats
+  int _pendingCount = 0;
+  int _approvedCount = 0;
+  int _rejectedCount = 0;
+
   @override
   void initState() {
     super.initState();
     _studentName = widget.studentName;
     _profileImageUrl = widget.profileImageUrl;
-
-    _loadStudentData(initialLoad: _studentName.isEmpty && _profileImageUrl.isEmpty);
-    _saveFcmToken();
+    _rollNumber = widget.rollNumber;
+    _token = widget.token;
     
-    FirebaseMessaging.instance.onTokenRefresh.listen((newToken) {
-      _saveFcmToken(token: newToken);
-    });
+    _loadStudentStats();
+    _saveAuthData();
   }
 
-  Future<void> _saveFcmToken({String? token}) async {
+  Future<void> _saveAuthData() async {
     try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) return;
-
-      final fcmToken = token ?? await FirebaseMessaging.instance.getToken();
-      if (fcmToken == null) return;
-
-      await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
-        'fcmToken': fcmToken,
-      }, SetOptions(merge: true));
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('rollNumber', _rollNumber);
+      await prefs.setString('token', _token);
+      await prefs.setString('studentName', _studentName);
+      await prefs.setString('profileImageUrl', _profileImageUrl);
     } catch (e) {
-      debugPrint('Failed to save FCM token: $e');
+      debugPrint('Error saving auth data: $e');
     }
   }
 
-  Future<void> _loadStudentData({bool initialLoad = false}) async {
-    if (initialLoad) {
-      setState(() => _loading = true);
-    }
-
+  Future<void> _loadStudentStats() async {
+    setState(() => _loading = true);
+    
     try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) {
-        if (mounted) setState(() => _loading = false);
-        return;
-      }
+      final response = await http.get(
+        Uri.parse('$_baseUrl/students/$_rollNumber/stats'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $_token',
+        },
+      );
 
-      final studentsCol = FirebaseFirestore.instance.collection('students');
-      DocumentSnapshot<Map<String, dynamic>>? studentDoc;
-
-      // Search by different fields to find student record
-      final byUid = await studentsCol.where('uid', isEqualTo: user.uid).limit(1).get();
-      if (byUid.docs.isNotEmpty) {
-        studentDoc = byUid.docs.first;
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        setState(() {
+          _pendingCount = data['pending'] ?? 0;
+          _approvedCount = data['approved'] ?? 0;
+          _rejectedCount = data['rejected'] ?? 0;
+          _loading = false;
+        });
       } else {
-        final byUsername = await studentsCol.where('username', isEqualTo: user.email).limit(1).get();
-        if (byUsername.docs.isNotEmpty) {
-          studentDoc = byUsername.docs.first;
-        } else {
-          final byEmail = await studentsCol.where('email', isEqualTo: user.email).limit(1).get();
-          if (byEmail.docs.isNotEmpty) studentDoc = byEmail.docs.first;
-        }
-      }
-
-      if (studentDoc != null) {
-        final data = studentDoc.data()!;
-        final name = (data['name'] ?? '').toString();
-        final profile = (data['profileImageUrl'] ?? '').toString();
-
-        if (mounted) {
-          setState(() {
-            _studentName = name.isNotEmpty ? name : _studentName;
-            _profileImageUrl = profile.isNotEmpty ? profile : _profileImageUrl;
-            _loading = false;
-          });
-        }
-      } else {
-        if (mounted) setState(() => _loading = false);
-      }
-    } catch (e) {
-      if (mounted) {
         setState(() => _loading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to load student data: $e'),
-            backgroundColor: _primaryRed,
-          ),
-        );
+      }
+    } catch (e) {
+      debugPrint('Error loading stats: $e');
+      setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _logout() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.clear();
+      
+      if (mounted) {
+        context.go('/signin');
+      }
+    } catch (e) {
+      debugPrint('Logout error: $e');
+      if (mounted) {
+        context.go('/signin');
       }
     }
   }
@@ -244,28 +241,16 @@ class _StudentHomeScreenState extends State<StudentHomeScreen> {
       ),
     );
 
-    if (doLogout != true) return;
-
-    showDialog(
-      context: context, 
-      barrierDismissible: false, 
-      builder: (_) => const Center(
-        child: CircularProgressIndicator(color: Colors.white),
-      ),
-    );
-    
-    try {
-      await FirebaseAuth.instance.signOut();
-      if (Navigator.of(context).canPop()) Navigator.of(context).pop();
-      context.go('/signin');
-    } catch (e) {
-      if (Navigator.of(context).canPop()) Navigator.of(context).pop();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Logout failed: $e'),
-          backgroundColor: _primaryRed,
+    if (doLogout == true) {
+      showDialog(
+        context: context, 
+        barrierDismissible: false, 
+        builder: (_) => const Center(
+          child: CircularProgressIndicator(color: Colors.white),
         ),
       );
+      await _logout();
+      if (mounted) Navigator.of(context).pop();
     }
   }
 
@@ -312,23 +297,15 @@ class _StudentHomeScreenState extends State<StudentHomeScreen> {
               padding: const EdgeInsets.all(24),
               child: Column(
                 children: [
-                  // Header Section
                   _buildHeaderSection(),
-                  
-                  // Content Section
                   Expanded(
                     child: SingleChildScrollView(
                       child: Column(
                         children: [
-                          // Main Actions Section
                           _buildMainActionsSection(),
                           const SizedBox(height: 24),
-
-                          // Quick Stats Section
                           _buildQuickStatsSection(),
                           const SizedBox(height: 32),
-                          
-                          // Logout Button
                           _buildLogoutButton(),
                         ],
                       ),
@@ -344,36 +321,41 @@ class _StudentHomeScreenState extends State<StudentHomeScreen> {
   }
 
   Widget _buildHeaderSection() {
-    return Container(
-      padding: const EdgeInsets.only(bottom: 24),
-      child: Row(
-        children: [
-          // Profile Avatar
-          Container(
-            width: 50,
-            height: 50,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              border: Border.all(color: _glassBorder, width: 2),
-              gradient: const LinearGradient(
-                colors: [
-                  Color(0xFFDC2626),
-                  Color(0xFF991B1B),
-                ],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
+  return Container(
+    padding: const EdgeInsets.only(bottom: 24),
+    child: Row(
+      children: [
+        Container(
+          width: 50,
+          height: 50,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(color: _glassBorder, width: 2),
+            gradient: const LinearGradient(
+              colors: [
+                Color(0xFFDC2626),
+                Color(0xFF991B1B),
+              ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
             ),
-            child: _profileImageUrl.isNotEmpty 
-                ? CircleAvatar(
-                    backgroundImage: NetworkImage(_profileImageUrl),
-                  )
-                : Icon(
-                    Icons.person,
-                    color: Colors.white.withOpacity(0.8),
-                    size: 24,
-                  ),
           ),
+          child: _profileImageUrl.isNotEmpty 
+              ? _profileImageUrl.startsWith('http')
+                  ? CircleAvatar(
+                      backgroundImage: NetworkImage(_profileImageUrl),
+                    ) // URL image
+                  : CircleAvatar(
+                      backgroundImage: MemoryImage(
+                        base64Decode(_profileImageUrl),
+                      ),
+                    ) // Base64 image
+              : Icon(
+                  Icons.person,
+                  color: Colors.white.withOpacity(0.8),
+                  size: 24,
+                ),
+        ),
           const SizedBox(width: 16),
           Expanded(
             child: Column(
@@ -396,10 +378,16 @@ class _StudentHomeScreenState extends State<StudentHomeScreen> {
                   ),
                   overflow: TextOverflow.ellipsis,
                 ),
+                Text(
+                  'Roll No: $_rollNumber',
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.6),
+                    fontSize: 12,
+                  ),
+                ),
               ],
             ),
           ),
-          // Settings Button
           Container(
             decoration: BoxDecoration(
               color: _glassWhite,
@@ -469,7 +457,10 @@ class _StudentHomeScreenState extends State<StudentHomeScreen> {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => const GatePassRequest(),
+                  builder: (context) => GatePassRequest(
+                    rollNumber: _rollNumber,
+                    studentName: _studentName,
+                  ),
                 ),
               );
             },
@@ -483,7 +474,9 @@ class _StudentHomeScreenState extends State<StudentHomeScreen> {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => const MyGatePass(),
+                  builder: (context) => MyGatePass(
+                    rollNumber: _rollNumber,
+                  ),
                 ),
               );
             },
@@ -494,7 +487,9 @@ class _StudentHomeScreenState extends State<StudentHomeScreen> {
             Icons.history_outlined,
             "See your past gate passes",
             () {
-              context.push('/view-history');
+              context.push('/view-history', extra: {
+                'rollNumber': _rollNumber,
+              });
             },
           ),
         ],
@@ -532,9 +527,9 @@ class _StudentHomeScreenState extends State<StudentHomeScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
-              _buildStatItem("Pending", "0", Icons.pending_actions_outlined),
-              _buildStatItem("Approved", "0", Icons.check_circle_outline),
-              _buildStatItem("Rejected", "0", Icons.cancel_outlined),
+              _buildStatItem("Pending", _pendingCount.toString(), Icons.pending_actions_outlined),
+              _buildStatItem("Approved", _approvedCount.toString(), Icons.check_circle_outline),
+              _buildStatItem("Rejected", _rejectedCount.toString(), Icons.cancel_outlined),
             ],
           ),
         ],

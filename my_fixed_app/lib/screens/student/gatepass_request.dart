@@ -1,12 +1,21 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+// gatepass_request.dart
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class GatePassRequest extends StatefulWidget {
-  const GatePassRequest({super.key});
+  final String rollNumber;
+  final String studentName;
+
+  const GatePassRequest({
+    super.key,
+    required this.rollNumber,
+    required this.studentName,
+  });
 
   @override
-  _GatePassRequestState createState() => _GatePassRequestState();
+  State<GatePassRequest> createState() => _GatePassRequestState();
 }
 
 class _GatePassRequestState extends State<GatePassRequest> {
@@ -21,6 +30,9 @@ class _GatePassRequestState extends State<GatePassRequest> {
 
   bool _isSubmitting = false;
   bool _isLoadingStudent = true;
+
+  // Backend URL
+  final String _baseUrl = 'http://127.0.0.1:5000/api';
 
   // 🎯 Color Palette
   final Color _primaryRed = const Color(0xFFDC2626);
@@ -41,37 +53,36 @@ class _GatePassRequestState extends State<GatePassRequest> {
     setState(() => _isLoadingStudent = true);
 
     try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) {
-        setState(() => _isLoadingStudent = false);
-        return;
-      }
+      // Get token from SharedPreferences
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token') ?? '';
+      final rollNumber = widget.rollNumber;
 
-      final studentsCol = FirebaseFirestore.instance.collection('students');
-      DocumentSnapshot<Map<String, dynamic>>? studentDoc;
+      // Fetch student details from backend
+      final response = await http.get(
+        Uri.parse('$_baseUrl/students/$rollNumber'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      );
 
-      final byUid = await studentsCol.where('uid', isEqualTo: user.uid).limit(1).get();
-      if (byUid.docs.isNotEmpty) {
-        studentDoc = byUid.docs.first;
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        nameController.text = data['name'] ?? widget.studentName;
+        rollController.text = data['rollNumber'] ?? widget.rollNumber;
+        deptController.text = data['department'] ?? '';
       } else {
-        final byUsername = await studentsCol.where('username', isEqualTo: user.email).limit(1).get();
-        if (byUsername.docs.isNotEmpty) {
-          studentDoc = byUsername.docs.first;
-        } else {
-          final byAuthEmail = await studentsCol.where('authEmail', isEqualTo: user.email).limit(1).get();
-          if (byAuthEmail.docs.isNotEmpty) studentDoc = byAuthEmail.docs.first;
-        }
-      }
-
-      if (studentDoc != null) {
-        final data = studentDoc.data()!;
-        nameController.text = (data['name'] ?? '').toString();
-        rollController.text = (data['rollNumber'] ?? data['username'] ?? '').toString();
-        deptController.text = (data['department'] ?? data['dept'] ?? '').toString();
+        // Fallback to passed parameters
+        nameController.text = widget.studentName;
+        rollController.text = widget.rollNumber;
       }
     } catch (e) {
+      // Fallback to passed parameters
+      nameController.text = widget.studentName;
+      rollController.text = widget.rollNumber;
       if (mounted) {
-        _showSnackBar('Failed to load student data: $e');
+        _showSnackBar('Using offline data');
       }
     } finally {
       if (mounted) setState(() => _isLoadingStudent = false);
@@ -86,33 +97,37 @@ class _GatePassRequestState extends State<GatePassRequest> {
       return;
     }
 
-    final user = FirebaseAuth.instance.currentUser;
-    final uid = user?.uid;
-    final email = user?.email;
-
     setState(() => _isSubmitting = true);
 
     try {
-      final docRef = FirebaseFirestore.instance.collection('gatepass_requests').doc();
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token') ?? '';
 
-      final data = {
-        'uid': uid ?? '',
-        'email': email ?? '',
+      final requestData = {
+        'rollNumber': widget.rollNumber,
         'studentName': nameController.text.trim(),
-        'rollNumber': rollController.text.trim(),
         'department': deptController.text.trim(),
         'reason': reasonController.text.trim(),
         'departureTime': _departureDateTime!.toIso8601String(),
         'returnTime': _returnDateTime!.toIso8601String(),
-        'status': 'Pending',
-        'createdAt': FieldValue.serverTimestamp(),
       };
 
-      await docRef.set(data);
+      final response = await http.post(
+        Uri.parse('$_baseUrl/gatepass/request'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode(requestData),
+      );
 
-      if (!mounted) return;
-      _showSnackBar('Request submitted successfully');
-      Navigator.pop(context);
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        if (!mounted) return;
+        _showSnackBar('Request submitted successfully');
+        Navigator.pop(context);
+      } else {
+        throw Exception('Failed to submit request');
+      }
     } catch (e) {
       if (!mounted) return;
       _showSnackBar('Failed to submit request: $e');
@@ -243,7 +258,8 @@ class _GatePassRequestState extends State<GatePassRequest> {
               onPrimary: Colors.white,
               surface: const Color(0xFF1A1A1A),
               onSurface: Colors.white,
-            ), dialogTheme: DialogThemeData(backgroundColor: const Color(0xFF2D1B1B)),
+            ),
+            dialogTheme: const DialogThemeData(backgroundColor: Color(0xFF2D1B1B)),
           ),
           child: child!,
         );
@@ -262,7 +278,8 @@ class _GatePassRequestState extends State<GatePassRequest> {
               onPrimary: Colors.white,
               surface: const Color(0xFF1A1A1A),
               onSurface: Colors.white,
-            ), dialogTheme: DialogThemeData(backgroundColor: const Color(0xFF2D1B1B)),
+            ),
+            dialogTheme: const DialogThemeData(backgroundColor: Color(0xFF2D1B1B)),
           ),
           child: child!,
         );

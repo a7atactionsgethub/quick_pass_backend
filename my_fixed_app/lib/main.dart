@@ -93,16 +93,20 @@ final GoRouter _router = GoRouter(
     GoRoute(path: '/requested-gate-pass', builder: (context, state) => const RequestedGatePass()),
     GoRoute(path: '/qr-scanner', builder: (context, state) => const QRScannerPage()),
     GoRoute(path: '/settings', builder: (context, state) => const SettingsScreen()),
-    GoRoute(
-      path: '/student-home',
-      builder: (context, state) {
-        final extra = state.extra as Map<String, dynamic>? ?? {};
-        return StudentHomeScreen(
-          studentName: extra['studentName'] ?? 'Student',
-          profileImageUrl: extra['profileImageUrl'] ?? '',
-        );
-      },
-    ),
+    // In main.dart, update the student-home route:
+
+GoRoute(
+  path: '/student-home',
+  builder: (context, state) {
+    final extra = state.extra as Map<String, dynamic>? ?? {};
+    return StudentHomeScreen(
+      studentName: extra['studentName'] ?? 'Student',
+      profileImageUrl: extra['profileImageUrl'] ?? '',
+      rollNumber: extra['rollNumber'] ?? '',  // ✅ ADD THIS
+      token: extra['token'] ?? '',            // ✅ ADD THIS
+    );
+  },
+),
     GoRoute(path: '/student-list', builder: (context, state) => const StudentListPage()),
   ],
   errorBuilder: (context, state) => Scaffold(
